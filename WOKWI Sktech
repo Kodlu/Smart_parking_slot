@@ -1,0 +1,349 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <WiFi.h>//library for wifi
+#include <PubSubClient.h>//library for MQtt 
+
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+
+//void callback(char* subscribetopic, byte* payload, unsigned int payloadLength);
+
+//-------credentials of IBM Accounts------
+
+#define ORG "(insert)"//IBM ORGANITION ID
+#define DEVICE_TYPE "(insert)"//Device type mentioned in ibm watson IOT Platform
+#define DEVICE_ID "(insert)"//Device ID mentioned in ibm watson IOT Platform
+#define TOKEN "(insert)"     //Token
+
+
+//-------- Customise the above values --------
+char server[] = ORG ".messaging.internetofthings.ibmcloud.com";// Server Name
+char publishTopic[] = "iot-2/evt/Data/fmt/json";// topic name and type of event perform and format in which data to be send
+char subscribetopic[] = "iot-2/cmd/command/fmt/String";// cmd  REPRESENT command type AND COMMAND IS TEST OF FORMAT STRING
+char authMethod[] = "use-token-auth";// authentication method
+char token[] = TOKEN;
+char clientId[] = "d:" ORG ":" DEVICE_TYPE ":" DEVICE_ID;//client id
+
+WiFiClient wifiClient; // creating the instance for wificlient
+PubSubClient client(server, 1883, wifiClient); //calling the predefined client id by passing parameter like server id,portand wificredential
+
+const int numofsensors=4;
+const int trigpin3=2;
+const int echopin3=15;
+const int trigpin4=4;
+const int echopin4=5;
+const int trigpin1=14;
+const int echopin1=27;
+const int trigpin2=13;
+const int echopin2=12;
+const float thresholddist=50.0; //car rear sensor beeps when half a meter away from obstacle/wall
+int parkingslots=4;
+int s1=0;
+int s2=0;
+int s3=0;
+int s4=0;
+unsigned long slotOccupiedTime[numofsensors];
+const int led1 = 26;
+const int led2 = 25;
+const int led3 = 18;
+const int led4 = 19;
+int freeSlots = 0;
+String topic;
+String payload;
+unsigned long lastPublishTime = 0;
+const unsigned long publishInterval = 10000;
+
+void setup() {
+    Serial.begin(9600);
+
+    Wire.begin(SDA, SCL);
+
+    lcd.begin(20, 4);
+    lcd.backlight();
+    wificonnect();
+    mqttconnect();
+
+    pinMode(trigpin1, OUTPUT);
+    pinMode(trigpin2, OUTPUT);
+    pinMode(trigpin3, OUTPUT);
+    pinMode(trigpin4, OUTPUT);
+
+    pinMode(led1,OUTPUT);
+    pinMode(led2,OUTPUT);
+    pinMode(led3,OUTPUT);
+    pinMode(led4,OUTPUT);
+
+    digitalWrite(led1, HIGH);
+    digitalWrite(led2, HIGH);
+    digitalWrite(led3, HIGH);
+    digitalWrite(led4, HIGH);
+
+    updateLCD();
+}
+
+void loop() {
+    
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastPublishTime >= publishInterval) {
+        publishFreeSlots();
+        lastPublishTime = currentMillis;
+    }
+
+    // Sensor 1
+
+    digitalWrite(trigpin1, LOW);
+    digitalWrite(trigpin1, HIGH);
+    delay(10);
+    digitalWrite(trigpin1, LOW);
+    long duration1 = pulseIn(echopin1, HIGH);
+    float dist1 = (duration1 * 0.0343) / 2;
+
+    if (dist1 < thresholddist && s1 == 0) {
+        parkingslots--;
+        s1 = 1;
+        digitalWrite(led1, LOW);
+        updateLCD();
+        slotOccupiedTime[0] = millis();
+    } else if (dist1 >= thresholddist && s1 == 1) {
+        parkingslots++;
+        s1 = 0;
+        digitalWrite(led1, HIGH);
+        updateLCD();
+        unsigned long elapsed = millis() - slotOccupiedTime[0]; // Calculate elapsed time
+        // Convert elapsed time to minutes or hours, depending on your requirement
+        int minutes = elapsed / 60000; // 60000 milliseconds = 1 minute
+        //int hours = minutes / 60;
+        // Send occupied time to IBM Watson IoT Platform
+        String topic = "iot-2/evt/Slot1/fmt/json";
+        String payload = "{\"occupied_time\":" + String(minutes) + "}";
+        //if (hours > 0) {
+        //    payload += "\"" + String(hours) + " hours ";
+        //}
+        //payload += String(minutes % 60) + " minutes}";
+         if (client.publish(topic.c_str(), (char*)payload.c_str())) {
+            Serial.println("Published data for Slot 1");
+            Serial.println(payload);
+        } 
+        else {
+            Serial.println("Failed to publish data for Slot 1");
+            }
+    }
+
+    // Sensor 2
+    digitalWrite(trigpin2, LOW);
+    digitalWrite(trigpin2, HIGH);
+    delay(10);
+    digitalWrite(trigpin2, LOW);
+    long duration2 = pulseIn(echopin2, HIGH);
+    float dist2 = (duration2 * 0.0343) / 2;
+
+    if (dist2 < thresholddist && s2 == 0) {
+        parkingslots--;
+        s2 = 1;
+        digitalWrite(led2, LOW);
+        updateLCD();
+        slotOccupiedTime[1] = millis();
+    } else if (dist2 >= thresholddist && s2 == 1) {
+        parkingslots++;
+        s2 = 0;
+        digitalWrite(led2, HIGH);
+        updateLCD();
+        unsigned long elapsed = millis() - slotOccupiedTime[1]; // Calculate elapsed time
+        // Convert elapsed time to minutes or hours, depending on your requirement
+        int minutes = elapsed / 60000; // 60000 milliseconds = 1 minute
+        //int hours = minutes / 60;
+        // Send occupied time to IBM Watson IoT Platform
+        String topic = "iot-2/evt/Slot2/fmt/json";
+        String payload = "{\"occupied_time\":" + String(minutes) + "}";
+        //if (hours > 0) {
+        //    payload += "\"" + String(hours) + " hours ";
+        //}
+        //payload += String(minutes % 60) + " minutes}";
+        if (client.publish(topic.c_str(), (char*)payload.c_str())) {
+            Serial.println("Published data for Slot 2");
+            Serial.println(payload);
+        } 
+        else {
+            Serial.println("Failed to publish data for Slot 2");
+            }
+    }
+
+    // Sensor 3
+    digitalWrite(trigpin3, LOW);
+    digitalWrite(trigpin3, HIGH);
+    delay(10);
+    digitalWrite(trigpin3, LOW);
+    long duration3 = pulseIn(echopin3, HIGH);
+    float dist3 = (duration3 * 0.0343) / 2;
+
+    if (dist3 < thresholddist && s3 == 0) {
+        parkingslots--;
+        s3 = 1;
+        digitalWrite(led3, LOW);
+        updateLCD();
+        slotOccupiedTime[2] = millis();
+    } else if (dist3 >= thresholddist && s3 == 1) {
+        parkingslots++;
+        s3 = 0;
+        digitalWrite(led3, HIGH);
+        updateLCD();
+        unsigned long elapsed = millis() - slotOccupiedTime[2]; // Calculate elapsed time
+        // Convert elapsed time to minutes or hours, depending on your requirement
+        int minutes = elapsed / 60000; // 60000 milliseconds = 1 minute
+        //int hours = minutes / 60;
+        // Send occupied time to IBM Watson IoT Platform
+        String topic = "iot-2/evt/Slot3/fmt/json";
+        String payload = "{\"occupied_time\":" + String(minutes) + "}";
+        //if (hours > 0) {
+        //    payload += "\"" + String(hours) + " hours ";
+        //}
+        //payload += String(minutes % 60) + " minutes}";
+         if (client.publish(topic.c_str(), (char*)payload.c_str())) {
+            Serial.println("Published data for Slot 3");
+            Serial.println(payload);
+        } 
+        else {
+            Serial.println("Failed to publish data for Slot 3");
+            }
+    }
+
+    // Sensor 4
+    digitalWrite(trigpin4, LOW);
+    digitalWrite(trigpin4, HIGH);
+    delay(10);
+    digitalWrite(trigpin4, LOW);
+    long duration4 = pulseIn(echopin4, HIGH);
+    float dist4 = (duration4 * 0.0343) / 2;
+
+    if (dist4 < thresholddist && s4 == 0) {
+        parkingslots--;
+        s4 = 1;
+        digitalWrite(led4, LOW);
+        updateLCD();
+        slotOccupiedTime[3] = millis();
+    } else if (dist4 >= thresholddist && s4 == 1) {
+        parkingslots++;
+        s4 = 0;
+        digitalWrite(led4, HIGH);
+        updateLCD();
+        unsigned long elapsed = millis() - slotOccupiedTime[3]; // Calculate elapsed time
+        // Convert elapsed time to minutes or hours, depending on your requirement
+        int minutes = elapsed / 60000; // 60000 milliseconds = 1 minute
+        //int hours = minutes / 60;
+        // Send occupied time to IBM Watson IoT Platform
+        String topic = "iot-2/evt/Slot4/fmt/json";
+        String payload = "{\"occupied_time\":" + String(minutes) + "}";
+        //if (hours > 0) {
+        //  payload += "\"" + String(hours) + " hours ";
+        //}
+        //payload += String(minutes % 60) + " minutes}";
+         if (client.publish(topic.c_str(), (char*)payload.c_str())) {
+            Serial.println("Published data for Slot 4");
+            Serial.println(payload);
+        } 
+        else {
+            Serial.println("Failed to publish data for Slot 4");
+            };
+        }
+    }
+
+void mqttconnect() {
+  if (!client.connected()) {
+    Serial.print("Reconnecting client to ");
+    Serial.println(server);
+    while (!!!client.connect(clientId, authMethod, token)) {
+      Serial.print(".");
+      delay(500);
+    }
+      
+     initManagedDevice();
+     Serial.println();
+  }
+}
+
+void wificonnect() //function defination for wificonnect
+{
+  Serial.println();
+  Serial.print("Connecting to ");
+
+  WiFi.begin("Wokwi-GUEST", "", 6);//passing the wifi credentials to establish the connection
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void initManagedDevice() {
+  if (client.subscribe(subscribetopic)) {
+    Serial.println((subscribetopic));
+    Serial.println("subscribe to cmd OK");
+  } else {
+    Serial.println("subscribe to cmd FAILED");
+  }
+}
+
+void publishFreeSlots() {
+  topic = "iot-2/evt/FreeSlots/fmt/json";
+  payload = "{\"free_slots\": " + String(freeSlots) + "}";
+
+  if (client.publish(topic.c_str(), payload.c_str())) {
+    Serial.println("Free slots published successfully.");
+  } else {
+    Serial.println("Failed to publish free slots data.");
+  }
+}
+
+  //LCD UPDATE FUNC
+ void updateLCD() {
+    freeSlots = parkingslots;
+        lcd.clear();
+    lcd.setCursor(2, 0);
+    lcd.print("Basement Parking");
+    lcd.setCursor(1, 1);
+    lcd.print("Free Slots:");
+    lcd.setCursor(12, 1);
+    lcd.print(freeSlots);
+    if(s1&&s2==1){
+      lcd.setCursor(14,1);
+      lcd.print("-->");
+    }
+    else if (s3&&s4==1){
+      lcd.setCursor(14,1);
+      lcd.print("<--");
+    }
+    lcd.setCursor(0, 2);
+    lcd.print("S1:");
+    lcd.setCursor(3, 2);
+    if (s1 == 0) {
+        lcd.print("Empty");
+    } else {
+        lcd.print("Full");
+    }
+    lcd.setCursor(0, 3);
+    lcd.print("S2:");
+    lcd.setCursor(3, 3);
+    if (s2 == 0) {
+        lcd.print("Empty");
+    } else {
+        lcd.print("Full");
+    }
+    lcd.setCursor(10, 2);
+    lcd.print("S3:");
+    lcd.setCursor(13, 2);
+    if (s3 == 0) {
+        lcd.print("Empty");
+    } else {
+        lcd.print("Full");
+    }
+    lcd.setCursor(10, 3);
+    lcd.print("S4:");
+    lcd.setCursor(13, 3);
+    if (s4 == 0) {
+        lcd.print("Empty");
+    } else {
+        lcd.print("Full");
+    }
+}
